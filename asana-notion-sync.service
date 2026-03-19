@@ -1,0 +1,15 @@
+[Unit]
+Description=Asana to Notion Sync Service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/asana-notion-sync
+ExecStart=/opt/asana-notion-sync/.venv/bin/python main.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

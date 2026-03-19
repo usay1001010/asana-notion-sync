@@ -1,0 +1,9 @@
+services:
+  sync:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./state.json:/app/state.json
+      - ./logs:/app/logs
