@@ -1,0 +1,41 @@
+name: Asana → Notion Sync
+
+on:
+  schedule:
+    - cron: "0 * * * *"  # 1時間ごと（UTC）
+  workflow_dispatch:       # 手動実行も可能
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # state.json をコミットするために必要
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run sync
+        env:
+          ASANA_PAT: ${{ secrets.ASANA_PAT }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ vars.NOTION_DATABASE_ID }}
+          ASANA_PROJECT_GIDS: ${{ vars.ASANA_PROJECT_GIDS }}
+        run: python main.py --once
+
+      - name: Save state
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add state.json
+          git diff --staged --quiet || git commit -m "chore: update sync state [skip ci]"
+          git push
