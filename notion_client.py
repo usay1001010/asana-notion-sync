@@ -99,6 +99,22 @@ def append_block_children(block_id: str, children: list) -> list:
     return created
 
 
+def query_database_by_id(database_id: str) -> list[dict]:
+    """任意のNotionデータベースのページを全件取得する"""
+    pages = []
+    payload: dict = {"page_size": 100}
+    url = f"{BASE}/databases/{database_id}/query"
+    while True:
+        resp = requests.post(url, headers=HEADERS, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        pages.extend(data["results"])
+        if not data.get("has_more"):
+            break
+        payload["start_cursor"] = data["next_cursor"]
+    return pages
+
+
 def get_users() -> list[dict]:
     """Notionワークスペースのユーザー一覧を取得する"""
     users = []

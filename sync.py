@@ -9,14 +9,35 @@ from notion_client import (
     get_block_children,
     clear_page_content,
     append_block_children,
+    query_database_by_id,
 )
 from mapper import asana_to_notion_properties, _subtask_label
 from state import load_state, save_state
-from config import ASANA_PROJECT_GIDS
+from config import ASANA_PROJECT_GIDS, NOTION_DEPT_DATABASE_ID
 
 logger = logging.getLogger(__name__)
 
 API_WAIT = 0.35
+
+
+def build_dept_map() -> dict:
+    """
+    部門DB（DB_8_部門）を取得して 部門名 → Notion page_id の辞書を返す。
+    Asana Departments の値と突き合わせて relation を設定するために使う。
+    """
+    dept_map: dict[str, str] = {}
+    try:
+        pages = query_database_by_id(NOTION_DEPT_DATABASE_ID)
+        for page in pages:
+            title_prop = page.get("properties", {}).get("部門名", {})
+            titles = title_prop.get("title", [])
+            name = titles[0]["plain_text"] if titles else ""
+            if name:
+                dept_map[name] = page["id"]
+        logger.info(f"Notion dept map loaded: {list(dept_map.keys())}")
+    except Exception as e:
+        logger.warning(f"Failed to fetch dept map: {e}")
+    return dept_map
 
 
 def build_notion_user_map() -> dict:
@@ -112,6 +133,7 @@ def sync_once() -> None:
     logger.info("===== Sync started =====")
     state = load_state()
     notion_user_map = build_notion_user_map()
+    dept_page_map = build_dept_map()
 
     created = updated = errors = 0
 
@@ -135,13 +157,26 @@ def sync_once() -> None:
                 task["subtasks"] = get_subtasks_recursive(gid)
 
                 # ② Notionプロパティに変換してページ作成/更新
-                props = asana_to_notion_properties(task, notion_user_map)
+                props = asana_to_notion_properties(
+                    task, notion_user_map, dept_page_map
+                )
 
                 if gid in state:
                     notion_page_id = state[gid]
-                    update_page(notion_page_id, props)
-                    updated += 1
-                    logger.debug(f"  Updated: {task['name']}")
+                    try:
+                        update_page(notion_page_id, props)
+                        updated += 1
+                        logger.debug(f"  Updated: {task['name']}")
+                    except Exception as update_err:
+                        logger.warning(
+                            f"  Update failed ({update_err}), recreating: {task['name']}"
+                        )
+                        del state[gid]
+                        page = create_page(props)
+                        notion_page_id = page["id"]
+                        state[gid] = notion_page_id
+                        created += 1
+                        logger.info(f"  Recreated: {task['name']}")
                 else:
                     page = create_page(props)
                     notion_page_id = page["id"]
