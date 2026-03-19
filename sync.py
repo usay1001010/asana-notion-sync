@@ -6,12 +6,9 @@ from notion_client import (
     create_page,
     update_page,
     get_users,
-    get_block_children,
-    clear_page_content,
-    append_block_children,
     query_database_by_id,
 )
-from mapper import asana_to_notion_properties, _subtask_label
+from mapper import asana_to_notion_properties
 from state import load_state, save_state
 from config import ASANA_PROJECT_GIDS, NOTION_DEPT_DATABASE_ID
 
@@ -56,76 +53,50 @@ def build_notion_user_map() -> dict:
     return user_map
 
 
-def _build_toggle(task: dict, include_children: bool = True) -> dict:
-    """タスク1件分のトグルブロックを生成する（children は1階層まで）"""
-    block: dict = {
-        "type": "toggle",
-        "toggle": {
-            "rich_text": [
-                {"type": "text", "text": {"content": _subtask_label(task)}}
-            ],
-        },
-    }
-    if include_children:
-        child_tasks = task.get("subtasks", [])
-        if child_tasks:
-            # Notion API 制限: 1リクエストで2階層まで → ここでは直下1層のみ含める
-            block["toggle"]["children"] = [
-                {
-                    "type": "toggle",
-                    "toggle": {
-                        "rich_text": [
-                            {
-                                "type": "text",
-                                "text": {"content": _subtask_label(c)},
-                            }
-                        ],
-                    },
-                }
-                for c in child_tasks
-            ]
-    return block
-
-
-def _sync_subtask_blocks(parent_block_id: str, subtasks: list) -> None:
+def _sync_subtasks_as_rows(
+    subtasks: list,
+    parent_notion_page_id: str,
+    state: dict,
+    notion_user_map: dict,
+    dept_page_map: dict,
+) -> tuple[int, int, int]:
     """
-    サブタスクを無制限の深さでNotionにトグルブロックとして書き込む。
-
-    Notion APIは1リクエストで2階層（親＋直下の子）まで対応。
-    それより深い階層は、作成済みブロックのIDを取得してから再帰的に追加する。
-
-    [アルゴリズム]
-    1. 現在階層 + 1階層下の子を含むブロックを送信
-    2. レスポンスで作成ブロックIDを取得
-    3. 各ブロックの子IDを取得し、さらに深い孫以降を再帰的に送信
+    サブタスクをDBの行（下位PJ）として再帰的に作成/更新する。
+    何階層でも対応（上位PJ = 親タスクのNotionページID）。
+    Returns (created, updated, errors)
     """
-    if not subtasks:
-        return
+    c = u = e = 0
+    for task in subtasks:
+        gid = task["gid"]
+        try:
+            props = asana_to_notion_properties(
+                task, notion_user_map, dept_page_map,
+                parent_project_page_id=parent_notion_page_id,
+            )
+            notion_page_id, was_created = _upsert_page(state, gid, props)
+            if was_created:
+                c += 1
+                logger.info(f"    Created subtask: {task['name']}")
+            else:
+                u += 1
+                logger.debug(f"    Updated subtask: {task['name']}")
+            time.sleep(API_WAIT)
 
-    # Level N + Level N+1 を構築して送信
-    level_blocks = [_build_toggle(t, include_children=True) for t in subtasks]
-    created = append_block_children(parent_block_id, level_blocks)
-
-    # Level N+2 以降を再帰処理
-    for i, task in enumerate(subtasks):
-        child_tasks = task.get("subtasks", [])
-        if not child_tasks or i >= len(created):
-            continue
-
-        # Level N+1 ブロックのIDを取得（さっき作った直下の子）
-        level_n1_block_id = created[i]["id"]
-        level_n1_children = get_block_children(level_n1_block_id)
-        time.sleep(0.2)
-
-        for j, child_task in enumerate(child_tasks):
-            grandchild_tasks = child_task.get("subtasks", [])
-            if not grandchild_tasks or j >= len(level_n1_children):
-                continue
-
-            level_n2_block_id = level_n1_children[j]["id"]
-            # 再帰 → Level N+2, N+3, ... を処理
-            _sync_subtask_blocks(level_n2_block_id, grandchild_tasks)
-            time.sleep(0.2)
+            child_subtasks = task.get("subtasks", [])
+            if child_subtasks:
+                cc, uu, ee = _sync_subtasks_as_rows(
+                    child_subtasks, notion_page_id,
+                    state, notion_user_map, dept_page_map,
+                )
+                c += cc
+                u += uu
+                e += ee
+        except Exception as err:
+            logger.error(
+                f"    Error on subtask {gid} ({task.get('name')}): {err}"
+            )
+            e += 1
+    return c, u, e
 
 
 def _upsert_page(
@@ -221,11 +192,16 @@ def sync_once() -> None:
 
                 time.sleep(API_WAIT)
 
-                # ページ本文を一旦クリアして、サブタスクを再帰的に書き込む
+                # サブタスクをDBの行（下位PJ）として再帰的に作成/更新
                 subtasks = task.get("subtasks", [])
-                clear_page_content(notion_page_id)
                 if subtasks:
-                    _sync_subtask_blocks(notion_page_id, subtasks)
+                    sc, su, se = _sync_subtasks_as_rows(
+                        subtasks, notion_page_id,
+                        state, notion_user_map, dept_page_map,
+                    )
+                    created += sc
+                    updated += su
+                    errors += se
                     logger.info(
                         f"  Subtasks synced: {len(subtasks)} top-level"
                     )
