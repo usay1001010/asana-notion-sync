@@ -1,7 +1,7 @@
 import time
 import logging
 
-from asana_client import get_tasks, get_subtasks_recursive
+from asana_client import get_tasks, get_subtasks_recursive, get_project
 from notion_client import (
     create_page,
     update_page,
@@ -128,6 +128,29 @@ def _sync_subtask_blocks(parent_block_id: str, subtasks: list) -> None:
             time.sleep(0.2)
 
 
+def _upsert_page(
+    state: dict, key: str, props: dict
+) -> tuple[str, bool]:
+    """
+    stateにkeyが存在すればupdate、なければcreateする。
+    削除済みページへのupdateは自動的にrecreateする。
+    Returns (notion_page_id, was_created)
+    """
+    if key in state:
+        notion_page_id = state[key]
+        try:
+            update_page(notion_page_id, props)
+            return notion_page_id, False
+        except Exception as err:
+            logger.warning(f"Update failed ({err}), recreating: {key}")
+            del state[key]
+
+    page = create_page(props)
+    notion_page_id = page["id"]
+    state[key] = notion_page_id
+    return notion_page_id, True
+
+
 def sync_once() -> None:
     """全プロジェクトのタスクをAsanaから取得し、Notionに差分同期する"""
     logger.info("===== Sync started =====")
@@ -138,7 +161,33 @@ def sync_once() -> None:
     created = updated = errors = 0
 
     for project_gid in ASANA_PROJECT_GIDS:
-        logger.info(f"Fetching tasks: project={project_gid}")
+        logger.info(f"Processing project: {project_gid}")
+
+        # ① Asanaプロジェクト自体をNotionの行として作成/更新（最上位PJ）
+        try:
+            project_info = get_project(project_gid)
+            project_props = {
+                "プロジェクト名": {
+                    "title": [{"text": {"content": project_info["name"]}}]
+                }
+            }
+            project_state_key = f"project_{project_gid}"
+            project_page_id, proj_created = _upsert_page(
+                state, project_state_key, project_props
+            )
+            if proj_created:
+                logger.info(f"  Project page created: {project_info['name']}")
+                created += 1
+            else:
+                logger.debug(f"  Project page updated: {project_info['name']}")
+                updated += 1
+            time.sleep(API_WAIT)
+        except Exception as e:
+            logger.error(f"Failed to upsert project page {project_gid}: {e}")
+            project_page_id = None
+            errors += 1
+
+        # ② タスク一覧取得
         try:
             tasks = get_tasks(project_gid)
         except Exception as e:
@@ -152,41 +201,27 @@ def sync_once() -> None:
         for task in tasks:
             gid = task["gid"]
             try:
-                # ① サブタスクを再帰取得（無制限の深さ・循環防止付き）
+                # サブタスクを再帰取得（無制限の深さ・循環防止付き）
                 logger.info(f"  Fetching subtasks: {task['name']}")
                 task["subtasks"] = get_subtasks_recursive(gid)
 
-                # ② Notionプロパティに変換してページ作成/更新
+                # Notionプロパティに変換（上位PJ = プロジェクト行のID）
                 props = asana_to_notion_properties(
-                    task, notion_user_map, dept_page_map
+                    task, notion_user_map, dept_page_map,
+                    parent_project_page_id=project_page_id,
                 )
 
-                if gid in state:
-                    notion_page_id = state[gid]
-                    try:
-                        update_page(notion_page_id, props)
-                        updated += 1
-                        logger.debug(f"  Updated: {task['name']}")
-                    except Exception as update_err:
-                        logger.warning(
-                            f"  Update failed ({update_err}), recreating: {task['name']}"
-                        )
-                        del state[gid]
-                        page = create_page(props)
-                        notion_page_id = page["id"]
-                        state[gid] = notion_page_id
-                        created += 1
-                        logger.info(f"  Recreated: {task['name']}")
-                else:
-                    page = create_page(props)
-                    notion_page_id = page["id"]
-                    state[gid] = notion_page_id
+                notion_page_id, task_created = _upsert_page(state, gid, props)
+                if task_created:
                     created += 1
                     logger.info(f"  Created: {task['name']}")
+                else:
+                    updated += 1
+                    logger.debug(f"  Updated: {task['name']}")
 
                 time.sleep(API_WAIT)
 
-                # ③ ページ本文を一旦クリアして、サブタスクを再帰的に書き込む
+                # ページ本文を一旦クリアして、サブタスクを再帰的に書き込む
                 subtasks = task.get("subtasks", [])
                 clear_page_content(notion_page_id)
                 if subtasks:

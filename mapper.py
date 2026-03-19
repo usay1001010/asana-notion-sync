@@ -40,6 +40,11 @@ def get_cf_value(task: dict, field_name: str):
         return cf.get("text_value")
     if t == "number":
         return cf.get("number_value")
+    if t == "date":
+        dv = cf.get("date_value")
+        return dv.get("date") if dv else None
+    if t == "people":
+        return [u["name"] for u in cf.get("people", []) if u.get("name")]
     return None
 
 
@@ -47,6 +52,7 @@ def asana_to_notion_properties(
     task: dict,
     notion_user_map: dict,
     dept_page_map: dict,
+    parent_project_page_id: str | None = None,
 ) -> dict:
     """
     AsanaタスクをNotion DBのプロパティ形式に変換する
@@ -54,12 +60,12 @@ def asana_to_notion_properties(
     フィールドマッピング:
         name              → プロジェクト名  (title)
         タスクの進捗       → ステータス     (select)
-        start_on / Start Date → 開始日     (date)
-        due_on / 期日      → 終了日         (date)
-        担当者             → PM            (people)
-        member            → メンバー       (people)
-        notes             → 備考           (rich_text)
-        Departments       → 部門           (relation → 部門DB)
+        start_on / 開始日  → 開始日        (date)
+        due_on  / 終了日   → 終了日        (date)
+        メンバー           → メンバー      (people)
+        notes             → 備考          (rich_text)
+        部門               → 部門         (relation → 部門DB)
+        parent_project_page_id → 上位PJ   (relation → 同一DB)
     """
     props: dict = {}
 
@@ -76,33 +82,22 @@ def asana_to_notion_properties(
         notion_status = STATUS_MAP.get(status_raw, "未着手")
         props["ステータス"] = {"select": {"name": notion_status}}
 
-    # 開始日 (date) — ネイティブ start_on 優先、なければ Start Date カスタムフィールド
+    # 開始日 (date) — ネイティブ start_on 優先、なければ「開始日」カスタムフィールド
     start_date: str | None = task.get("start_on")
     if not start_date:
-        sd_raw = get_cf_value(task, "Start Date")
-        if sd_raw:
-            start_date = parse_japanese_date(sd_raw)
+        start_date = get_cf_value(task, "開始日")
     if start_date:
         props["開始日"] = {"date": {"start": start_date}}
 
-    # 終了日 (date) — ネイティブ due_on 優先、なければ 期日 カスタムフィールド
+    # 終了日 (date) — ネイティブ due_on 優先、なければ「終了日」カスタムフィールド
     end_date: str | None = task.get("due_on")
     if not end_date:
-        ed_raw = get_cf_value(task, "期日")
-        if ed_raw:
-            end_date = parse_japanese_date(ed_raw)
+        end_date = get_cf_value(task, "終了日")
     if end_date:
         props["終了日"] = {"date": {"start": end_date}}
 
-    # PM (people) — Asana 担当者カスタムフィールド（enum・単一値）
-    assignee_name = get_cf_value(task, "担当者")
-    if assignee_name:
-        uid = notion_user_map.get(assignee_name) or USER_MAP.get(assignee_name)
-        if uid:
-            props["PM"] = {"people": [{"id": uid}]}
-
-    # メンバー (people) — Asana member カスタムフィールド（multi_enum・複数値）
-    member_names = get_cf_value(task, "member") or []
+    # メンバー (people) — Asana「メンバー」カスタムフィールド（people型）
+    member_names = get_cf_value(task, "メンバー") or []
     if isinstance(member_names, str):
         member_names = [member_names]
     notion_users = []
@@ -120,8 +115,8 @@ def asana_to_notion_properties(
             "rich_text": [{"text": {"content": notes[:2000]}}]
         }
 
-    # 部門 (relation) — Asana Departments → 部門DB のページID
-    depts = get_cf_value(task, "Departments") or []
+    # 部門 (relation) — Asana「部門」カスタムフィールド → 部門DB のページID
+    depts = get_cf_value(task, "部門") or []
     dept_relations = []
     for dept in depts:
         # 1. config の DEPT_NAME_MAP で名前変換（手動マッピング）
@@ -138,6 +133,10 @@ def asana_to_notion_properties(
             dept_relations.append({"id": page_id})
     if dept_relations:
         props["部門"] = {"relation": dept_relations}
+
+    # 上位PJ (relation) — 親プロジェクトのNotionページID
+    if parent_project_page_id:
+        props["上位PJ"] = {"relation": [{"id": parent_project_page_id}]}
 
     return props
 
@@ -162,15 +161,14 @@ def _subtask_label(task: dict) -> str:
 
     label = f"{emoji} {task.get('name', '(無題)')}"
 
-    due = task.get("due_on") or ""
-    if not due:
-        ed_raw = get_cf_value(task, "期日") or ""
-        due = parse_japanese_date(ed_raw) or ""
+    due = task.get("due_on") or get_cf_value(task, "終了日") or ""
     if due:
         label += f"　〜{due}"
 
-    assignee_raw = get_cf_value(task, "担当者") or ""
-    if assignee_raw:
-        label += f"　@{assignee_raw}"
+    members = get_cf_value(task, "メンバー") or []
+    if isinstance(members, str):
+        members = [members]
+    if members:
+        label += "　@" + "/".join(members)
 
     return label[:2000]

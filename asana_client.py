@@ -27,6 +27,9 @@ TASK_OPT_FIELDS = ",".join([
     "custom_fields.multi_enum_values.name",
     "custom_fields.text_value",
     "custom_fields.number_value",
+    "custom_fields.date_value",
+    "custom_fields.people",
+    "custom_fields.people.name",
 ])
 
 
@@ -51,7 +54,9 @@ def get_tasks(project_gid: str) -> list[dict]:
     return tasks
 
 
-def get_subtasks_recursive(task_gid: str, visited: set | None = None) -> list[dict]:
+def get_subtasks_recursive(
+    task_gid: str, visited: set | None = None
+) -> list[dict]:
     """
     サブタスクを無制限に再帰取得する。
 
@@ -84,6 +89,15 @@ def get_subtasks_recursive(task_gid: str, visited: set | None = None) -> list[di
         params["offset"] = next_page["offset"]
 
     return subtasks
+
+
+def get_project(project_gid: str) -> dict:
+    """単一プロジェクトの情報を取得する"""
+    url = f"{BASE}/projects/{project_gid}"
+    params = {"opt_fields": "gid,name"}
+    resp = requests.get(url, headers=HEADERS, params=params)
+    resp.raise_for_status()
+    return resp.json()["data"]
 
 
 def get_projects(workspace_gid: str | None = None) -> list[dict]:
