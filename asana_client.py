@@ -1,3 +1,4 @@
+import time
 import requests
 from config import ASANA_PAT
 
@@ -48,6 +49,41 @@ def get_tasks(project_gid: str) -> list[dict]:
             break
         params["offset"] = next_page["offset"]
     return tasks
+
+
+def get_subtasks_recursive(task_gid: str, visited: set | None = None) -> list[dict]:
+    """
+    サブタスクを無制限に再帰取得する。
+
+    - visited: 循環参照防止用（すでに処理したGIDのセット）
+    - 各サブタスクに "subtasks" キーで子リストをネストして返す
+    """
+    if visited is None:
+        visited = set()
+    if task_gid in visited:
+        return []
+    visited.add(task_gid)
+
+    subtasks = []
+    params = {"opt_fields": TASK_OPT_FIELDS, "limit": 100}
+    url = f"{BASE}/tasks/{task_gid}/subtasks"
+
+    while True:
+        resp = requests.get(url, headers=HEADERS, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+
+        for task in data["data"]:
+            time.sleep(0.2)  # Asana APIレート制限対策
+            task["subtasks"] = get_subtasks_recursive(task["gid"], visited)
+            subtasks.append(task)
+
+        next_page = data.get("next_page")
+        if not next_page:
+            break
+        params["offset"] = next_page["offset"]
+
+    return subtasks
 
 
 def get_projects(workspace_gid: str | None = None) -> list[dict]:

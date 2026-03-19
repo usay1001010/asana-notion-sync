@@ -115,3 +115,39 @@ def asana_to_notion_properties(task: dict, notion_user_map: dict) -> dict:
         props["メンバー"] = {"people": notion_users}
 
     return props
+
+
+# ステータス絵文字マップ
+_STATUS_EMOJI: dict[str, str] = {
+    "未着手": "⏳",
+    "進行中": "🔄",
+    "待機中": "⏸",
+    "延期": "⏸",
+    "完了": "✅",
+}
+
+
+def _subtask_label(task: dict) -> str:
+    """サブタスク1件のトグル表示テキストを生成する"""
+    if task.get("completed"):
+        emoji = "✅"
+    else:
+        status_raw = get_cf_value(task, "タスクの進捗") or ""
+        emoji = _STATUS_EMOJI.get(status_raw, "⏳")
+
+    label = f"{emoji} {task.get('name', '(無題)')}"
+
+    due = task.get("due_on") or ""
+    if not due:
+        ed_raw = get_cf_value(task, "期日") or ""
+        due = parse_japanese_date(ed_raw) or ""
+    if due:
+        label += f"　〜{due}"
+
+    assignee_raw = get_cf_value(task, "担当者") or ""
+    if assignee_raw:
+        label += f"　@{assignee_raw}"
+
+    return label[:2000]
+
+
