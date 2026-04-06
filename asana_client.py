@@ -17,6 +17,8 @@ TASK_OPT_FIELDS = ",".join([
     "due_on",
     "start_on",
     "modified_at",
+    "assignee",
+    "assignee.name",
     "custom_fields",
     "custom_fields.gid",
     "custom_fields.name",
@@ -91,6 +93,43 @@ def get_subtasks_recursive(
     return subtasks
 
 
+def get_sections(project_gid: str) -> list[dict]:
+    """プロジェクトのセクション一覧を取得する"""
+    sections = []
+    params: dict = {"opt_fields": "gid,name", "limit": 100}
+    url = f"{BASE}/projects/{project_gid}/sections"
+    while True:
+        resp = requests.get(url, headers=HEADERS, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        sections.extend(data["data"])
+        next_page = data.get("next_page")
+        if not next_page:
+            break
+        params["offset"] = next_page["offset"]
+    return sections
+
+
+def get_tasks_for_section(section_gid: str) -> list[dict]:
+    """セクション内のタスクを全件取得する"""
+    tasks = []
+    params = {
+        "opt_fields": TASK_OPT_FIELDS,
+        "limit": 100,
+    }
+    url = f"{BASE}/sections/{section_gid}/tasks"
+    while True:
+        resp = requests.get(url, headers=HEADERS, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        tasks.extend(data["data"])
+        next_page = data.get("next_page")
+        if not next_page:
+            break
+        params["offset"] = next_page["offset"]
+    return tasks
+
+
 def get_project(project_gid: str) -> dict:
     """単一プロジェクトの情報を取得する"""
     url = f"{BASE}/projects/{project_gid}"
@@ -107,5 +146,30 @@ def get_projects(workspace_gid: str | None = None) -> list[dict]:
         params["workspace"] = workspace_gid
     url = f"{BASE}/projects"
     resp = requests.get(url, headers=HEADERS, params=params)
+    resp.raise_for_status()
+    return resp.json()["data"]
+
+
+def get_custom_field_options(cf_gid: str) -> list[dict]:
+    """カスタムフィールドの現在の選択肢一覧を取得する"""
+    url = f"{BASE}/custom_fields/{cf_gid}"
+    params = {
+        "opt_fields": "enum_options,enum_options.name,"
+        "enum_options.enabled",
+    }
+    resp = requests.get(url, headers=HEADERS, params=params)
+    resp.raise_for_status()
+    return resp.json()["data"].get("enum_options", [])
+
+
+def add_custom_field_option(
+    cf_gid: str, name: str, color: str = "none"
+) -> dict:
+    """カスタムフィールドに新しい選択肢を追加する"""
+    url = f"{BASE}/custom_fields/{cf_gid}/enum_options"
+    payload = {
+        "data": {"name": name, "enabled": True, "color": color}
+    }
+    resp = requests.post(url, headers=HEADERS, json=payload)
     resp.raise_for_status()
     return resp.json()["data"]

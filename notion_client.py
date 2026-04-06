@@ -47,6 +47,17 @@ def update_page(page_id: str, properties: dict) -> dict:
     return resp.json()
 
 
+def archive_page(page_id: str) -> dict:
+    """Notionページをアーカイブ（削除）する"""
+    resp = requests.patch(
+        f"{BASE}/pages/{page_id}",
+        headers=HEADERS,
+        json={"archived": True},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 def get_block_children(block_id: str) -> list[dict]:
     """ページ/ブロックの直下の子ブロックを全件取得する"""
     children = []

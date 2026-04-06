@@ -59,13 +59,17 @@ def asana_to_notion_properties(
 
     フィールドマッピング:
         name              → プロジェクト名  (title)
-        タスクの進捗       → ステータス     (select)
-        start_on / 開始日  → 開始日        (date)
-        due_on  / 終了日   → 終了日        (date)
-        メンバー           → メンバー      (people)
+        ステータス(CF)     → ステータス     (select)
+        assignee          → 担当者        (person)
+        start_on          → 期日.start    (date)
+        due_on            → 期日.end      (date)
+        メンバー(CF)       → メンバー      (people)
         notes             → 備考          (rich_text)
-        部門               → 部門         (relation → 部門DB)
-        parent_project_page_id → 上位PJ   (relation → 同一DB)
+        部門(CF)           → 部門         (relation → 部門DB)
+        parent            → 上位PJ       (relation → 同一DB)
+    同期しない:
+        担当者（仮）(CF)   — assigneeに移行済み
+        備考(CF enum)      — テキストではなくタグ
     """
     props: dict = {}
 
@@ -74,27 +78,36 @@ def asana_to_notion_properties(
         "title": [{"text": {"content": task.get("name", "")}}]
     }
 
-    # ステータス (select)
-    status_raw = get_cf_value(task, "タスクの進捗")
+    # ステータス (select) — Asana CF「ステータス」
+    status_raw = get_cf_value(task, "ステータス")
+    if not status_raw:
+        status_raw = get_cf_value(task, "タスクの進捗")
     if task.get("completed"):
         status_raw = "完了"
     if status_raw:
         notion_status = STATUS_MAP.get(status_raw, "未着手")
         props["ステータス"] = {"select": {"name": notion_status}}
 
-    # 開始日 (date) — ネイティブ start_on 優先、なければ「開始日」カスタムフィールド
+    # 担当者 (person) — Asana assignee
+    assignee = task.get("assignee")
+    if assignee and isinstance(assignee, dict):
+        assignee_name = assignee.get("name", "")
+        uid = notion_user_map.get(assignee_name) or USER_MAP.get(assignee_name)
+        if uid:
+            props["担当者"] = {"people": [{"id": uid}]}
+
+    # 期日 (date) — start_on → 期日.start、due_on → 期日.end
     start_date: str | None = task.get("start_on")
     if not start_date:
         start_date = get_cf_value(task, "開始日")
-    if start_date:
-        props["開始日"] = {"date": {"start": start_date}}
-
-    # 終了日 (date) — ネイティブ due_on 優先、なければ「終了日」カスタムフィールド
     end_date: str | None = task.get("due_on")
     if not end_date:
         end_date = get_cf_value(task, "終了日")
-    if end_date:
-        props["終了日"] = {"date": {"start": end_date}}
+    if start_date or end_date:
+        date_value: dict = {"start": start_date or end_date}
+        if start_date and end_date and start_date != end_date:
+            date_value["end"] = end_date
+        props["期日"] = {"date": date_value}
 
     # メンバー (people) — Asana「メンバー」カスタムフィールド（people型）
     member_names = get_cf_value(task, "メンバー") or []

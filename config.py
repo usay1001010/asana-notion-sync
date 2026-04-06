@@ -5,12 +5,17 @@ load_dotenv()
 
 ASANA_PAT = os.getenv("ASANA_PAT")
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
-NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID", "69e2765b975145eb806f5a27df3b06f6")
-
-# 部門DBのID（DB_8_部門）
-NOTION_DEPT_DATABASE_ID = os.getenv(
-    "NOTION_DEPT_DATABASE_ID", "516cd9825d1b47fba8ccc4f40a62d0ba"
+NOTION_DATABASE_ID = os.getenv(
+    "NOTION_DATABASE_ID", "02aaa45a3f1383a7a885811eac2644b2"
 )
+
+# 部門DBのID（DB_8_部門 — new NAGARA ワークスペース）
+NOTION_DEPT_DATABASE_ID = os.getenv(
+    "NOTION_DEPT_DATABASE_ID", "c15aa45a3f1383d79e1c010758a03f75"
+)
+
+# Asana「部門」カスタムフィールドのGID（multi_enum）
+ASANA_DEPT_CF_GID = os.getenv("ASANA_DEPT_CF_GID", "1213664633962572")
 
 # カンマ区切りで複数プロジェクトGIDを指定できる
 ASANA_PROJECT_GIDS = [
@@ -46,3 +51,34 @@ DEPT_NAME_MAP: dict[str, str] = {
 USER_MAP: dict[str, str] = {
     # "岡田一輝": "notion-user-id",
 }
+
+# 部門カテゴリ → Asana色
+# 経営→red, 営業→orange, プロダクト開発→green, コーポレート→cool-gray
+DEPT_CATEGORY_COLOR: dict[str, str] = {
+    # 経営
+    "経営戦略課": "red",
+    "経営推進課": "red",
+    "資金調達": "red",
+    "外交": "red",
+    # 営業
+    "営業課": "orange",
+    "営業戦略課": "orange",
+    "CS課": "orange",
+    "マーケティング": "orange",
+    # プロダクト開発
+    "プロダクト": "green",
+    "開発": "green",
+    "情報システム": "green",
+    # コーポレート
+    "総務": "cool-gray",
+    "経理・財務": "cool-gray",
+    "人事": "cool-gray",
+    "労務": "cool-gray",
+    "法務・知財": "cool-gray",
+    "企画課": "cool-gray",
+    "イベント": "cool-gray",
+    "カルチャー・学び": "cool-gray",
+}
+
+# 新規部門のデフォルト色（DEPT_CATEGORY_COLORに未定義の場合）
+DEPT_DEFAULT_COLOR = "none"
